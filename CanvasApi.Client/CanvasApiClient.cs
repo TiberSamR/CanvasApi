@@ -177,6 +177,34 @@ public class CanvasApiClient : ICanvasApiClient, IDisposable
     }
 
 
+    // ── Async (non-blocking) paging ────────────────────────────────────────────────────────────────
+    // Streams every page of a paged Canvas response without blocking a thread. Page 1 is already materialised
+    // into initialBuffer by the producer (PagableApiOperation); each subsequent page is awaited. This mirrors
+    // the synchronous PageableResultsEnumerator.CallApi (GET, no body, a fresh PageLinks per page) but uses
+    // await instead of Task.Wait(). It backs PageableResult<T>'s IAsyncEnumerable implementation — prefer it
+    // (await foreach / ToListAsync / ToArrayAsync) over the [Obsolete] synchronous enumerator.
+    internal async IAsyncEnumerable<TResult> PageStreamAsync<TResult, TApiResult>(
+        IEnumerable<TResult> initialBuffer,
+        PageLinks pageLinks,
+        Func<TApiResult, IEnumerable<TResult>> factory,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        foreach (var item in initialBuffer ?? Array.Empty<TResult>())
+            yield return item;
+
+        var links = pageLinks;
+        while (!string.IsNullOrWhiteSpace(links?.Next))
+        {
+            var nextLinks = new PageLinks(links.OriginalUrl);
+            var apiResult = await this.ApiOperation<TApiResult, object>(HttpMethod.Get, links.Next, null, nextLinks, cancellationToken);
+
+            foreach (var item in factory(apiResult))
+                yield return item;
+
+            links = nextLinks;
+        }
+    }
+
     internal Task<TResult> ApiOperation<TResult>(HttpMethod verb, string url) => this.ApiOperation<TResult, object>(verb, url, null);
 
     internal async Task<TResult> ApiOperation<TResult, TBody>(
@@ -238,13 +266,17 @@ public class CanvasApiClient : ICanvasApiClient, IDisposable
             {
                 foreach (var content in multipartFormDataContent)
                 {
-                    var dataTask = content.ReadAsStringAsync();
-                    dataTask.Wait();
+                    // Read synchronously — these multipart parts are already-buffered in-memory form fields,
+                    // so ReadAsStream() completes without I/O. The previous ReadAsStringAsync().Wait() was
+                    // sync-over-async that pinned a thread-pool thread for no benefit.
+                    using var contentStream = content.ReadAsStream();
+                    using var contentReader = new System.IO.StreamReader(contentStream);
+                    var data = contentReader.ReadToEnd();
 
-                    if (!string.IsNullOrWhiteSpace(dataTask.Result))
+                    if (!string.IsNullOrWhiteSpace(data))
                     {
                         var paramName = content.Headers.ContentDisposition.Name.Trim('"');
-                        requestUrl += $"{(requestUrl.Contains('?') ? '&' : '?')}{paramName}={HttpUtility.UrlEncode(dataTask.Result)}";
+                        requestUrl += $"{(requestUrl.Contains('?') ? '&' : '?')}{paramName}={HttpUtility.UrlEncode(data)}";
                     }
                 }
             }

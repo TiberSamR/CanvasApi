@@ -12,12 +12,17 @@ public class CanvasApiException : Exception
     internal CanvasApiException(HttpResponseMessage response, string message = null, Exception innterException = null) : base(message, innterException)
     {
         this.Response = response;
-        this.ParseApiResult().Wait(); 
+        this.ParseApiResult();
     }
 
-    private async Task ParseApiResult()
+    // Read synchronously: a constructor can't be async, so the prior ParseApiResult().Wait() was sync-over-async.
+    // The response content is already buffered (default HttpCompletionOption.ResponseContentRead), so ReadAsStream()
+    // completes without blocking on network I/O.
+    private void ParseApiResult()
     {
-        var msg = await this.Response.Content.ReadAsStringAsync();
+        using var stream = this.Response.Content.ReadAsStream();
+        using var reader = new System.IO.StreamReader(stream);
+        var msg = reader.ReadToEnd();
         try
         {
             this.ApiResultObject = JObject.Parse(msg);

@@ -1,7 +1,7 @@
 ﻿// ReSharper disable InconsistentNaming
 namespace CanvasApi.Client;
 
-internal class PageableResult<TResult> : IEnumerable<TResult>
+internal class PageableResult<TResult> : IEnumerable<TResult>, IAsyncEnumerable<TResult>
 {
     protected TResult[] InitialBuffer { get; set; }
     protected readonly CanvasApiClient _ApiClient;
@@ -25,6 +25,7 @@ internal class PageableResult<TResult> : IEnumerable<TResult>
         this._ApiClient = apiClient;
     }
 
+    [Obsolete("Synchronous enumeration blocks a thread-pool thread on every page fetch after the first (sync-over-async), which can starve the pool under load. Consume without blocking via await foreach, or the ToListAsync()/ToArrayAsync() extensions.")]
     public virtual IEnumerator<TResult> GetEnumerator() =>
         new PageableResultsEnumerator<TResult>(this.InitialBuffer)
         {
@@ -32,7 +33,15 @@ internal class PageableResult<TResult> : IEnumerable<TResult>
             ApiClient = this._ApiClient
         };
 
+#pragma warning disable CS0618 // the synchronous enumerator is the intended (deprecated) fallback for IEnumerable consumers
     IEnumerator IEnumerable.GetEnumerator() => this.GetEnumerator();
+#pragma warning restore CS0618
+
+    // Non-blocking page streaming: page 1 is already buffered, subsequent pages are awaited. Preferred path.
+    public virtual IAsyncEnumerator<TResult> GetAsyncEnumerator(CancellationToken cancellationToken = default) =>
+        this._ApiClient
+            .PageStreamAsync<TResult, IEnumerable<TResult>>(this.InitialBuffer, this._initialPageLinks, static data => data, cancellationToken)
+            .GetAsyncEnumerator(cancellationToken);
 }
 
 /// <summary>
@@ -55,6 +64,7 @@ internal class PageableResult<TResult, TApiResult> : PageableResult<TResult>
         this.InitialBuffer = this.Factory(apiResult).ToArray();
     }
 
+    [Obsolete("Synchronous enumeration blocks a thread-pool thread on every page fetch after the first (sync-over-async). Consume without blocking via await foreach, or the ToListAsync()/ToArrayAsync() extensions.")]
     public override IEnumerator<TResult> GetEnumerator() =>
         new PageableResultsEnumerator<TResult, TApiResult>(this.InitialBuffer, this.Factory)
         {
@@ -62,6 +72,10 @@ internal class PageableResult<TResult, TApiResult> : PageableResult<TResult>
             ApiClient = this._ApiClient,
         };
 
+    public override IAsyncEnumerator<TResult> GetAsyncEnumerator(CancellationToken cancellationToken = default) =>
+        this._ApiClient
+            .PageStreamAsync<TResult, TApiResult>(this.InitialBuffer, this._initialPageLinks, this.Factory, cancellationToken)
+            .GetAsyncEnumerator(cancellationToken);
 }
 
 /// <summary>
