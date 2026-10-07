@@ -28,12 +28,12 @@ public interface IPage
     /// of 'teachers', 'students', 'members', and/or 'public' if not supplied, course
     /// defaults are used
     /// </summary>
-    EditingRoles[] EditingRoles { get; }
+    string EditingRoles { get; }
     /// <summary>
     /// the User who last edited the page (this may not be present if the page was
     /// imported from another system)
     /// </summary>
-    string LastEditedBy { get; }
+    JObject LastEditedBy { get; }
     /// <summary>
     /// the page content, in HTML (present when requesting a single page; omitted
     /// when listing pages)

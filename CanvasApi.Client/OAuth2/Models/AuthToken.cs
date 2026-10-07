@@ -18,6 +18,12 @@ public interface IAuthToken
     /// Seconds until the access token expires.
     /// </summary>
     long ExpiresIn { get; }
+    /// <summary>
+    /// The refresh token Canvas issues with an <c>authorization_code</c> grant, used to obtain a
+    /// new access token when this one expires. Empty on a <c>refresh_token</c> grant's response:
+    /// Canvas keeps the original refresh token valid rather than rotating it.
+    /// </summary>
+    string RefreshToken { get; }
 }
     
 internal class AuthToken: IAuthToken
